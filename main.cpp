@@ -1,6 +1,7 @@
 // water_waves.cpp
 // Minimal demo: animated ocean with environment reflections and moving ships
 // Dependencies: GLFW, glad, Assimp, stb_image, glm
+// Press 'B' to switch skybox, 'F' to toggle Fresnel mode (realistic <-> enhanced)
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -39,6 +40,9 @@ bool firstMouse = true;
 bool useSkybox2 = true;  // select alternate skybox set
 bool skyboxChanged = true; // request reload when toggled
 
+// Fresnel mode selection (added)
+bool useEnhancedFresnel = false;   // false = realistic (R0=0.02, exp=5), true = enhanced (R0=0.7, exp=2)
+
 // Ship circular motion parameters
 const float SHIP_RADIUS = 30.0f;
 const float SHIP_ANGULAR_SPEED = 0.15f;
@@ -64,15 +68,15 @@ struct Model;
 class Shader {
 public:
     unsigned int ID;
-    
+
     Shader(const char* vertexCode, const char* fragmentCode,
-           const char* geometryCode = nullptr) {
+        const char* geometryCode = nullptr) {
         const char* vShaderCode = vertexCode;
         const char* fShaderCode = fragmentCode;
         const char* gShaderCode = geometryCode;
 
         unsigned int vertex, geometry = 0, fragment;
-        
+
         vertex = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(vertex, 1, &vShaderCode, NULL);
         glCompileShader(vertex);
@@ -103,21 +107,21 @@ public:
             glDeleteShader(geometry);
         glDeleteShader(fragment);
     }
-    
+
     void use() { glUseProgram(ID); }
-    void setMat4(const std::string &name, const glm::mat4 &mat) {
+    void setMat4(const std::string& name, const glm::mat4& mat) {
         glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, &mat[0][0]);
     }
-    void setVec3(const std::string &name, const glm::vec3 &value) {
+    void setVec3(const std::string& name, const glm::vec3& value) {
         glUniform3fv(glGetUniformLocation(ID, name.c_str()), 1, &value[0]);
     }
-    void setFloat(const std::string &name, float value) {
+    void setFloat(const std::string& name, float value) {
         glUniform1f(glGetUniformLocation(ID, name.c_str()), value);
     }
-    void setInt(const std::string &name, int value) {
+    void setInt(const std::string& name, int value) {
         glUniform1i(glGetUniformLocation(ID, name.c_str()), value);
     }
-    
+
 private:
     void checkCompileErrors(unsigned int shader, std::string type) {
         GLint success;
@@ -128,7 +132,8 @@ private:
                 glGetShaderInfoLog(shader, 1024, NULL, infoLog);
                 std::cerr << "ERROR::SHADER_COMPILATION_ERROR of type: " << type << "\n" << infoLog << std::endl;
             }
-        } else {
+        }
+        else {
             glGetProgramiv(shader, GL_LINK_STATUS, &success);
             if (!success) {
                 glGetProgramInfoLog(shader, 1024, NULL, infoLog);
@@ -164,7 +169,8 @@ struct Model {
                 if (i < texCoords.size()) {
                     data.push_back(texCoords[i].x);
                     data.push_back(texCoords[i].y);
-                } else {
+                }
+                else {
                     data.push_back(0.0f); data.push_back(0.0f);
                 }
             }
@@ -224,7 +230,8 @@ struct Model {
             normals.push_back(glm::vec3(mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z));
             if (mesh->mTextureCoords[0]) {
                 texCoords.push_back(glm::vec2(mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y));
-            } else {
+            }
+            else {
                 texCoords.push_back(glm::vec2(0.0f));
             }
         }
@@ -327,7 +334,8 @@ unsigned int loadTexture(const char* path) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         stbi_image_free(data);
-    } else {
+    }
+    else {
         std::cerr << "Texture failed to load: " << path << std::endl;
         stbi_image_free(data);
     }
@@ -345,37 +353,38 @@ unsigned int loadCubemap(std::vector<std::string> faces) {
         if (data) {
             unsigned char* flippedData = new unsigned char[width * height * nrChannels];
             int rowSize = width * nrChannels;
-            
+
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
                     memcpy(flippedData + y * rowSize + (width - 1 - x) * nrChannels,
-                           data + y * rowSize + x * nrChannels,
-                           nrChannels);
+                        data + y * rowSize + x * nrChannels,
+                        nrChannels);
                 }
             }
-            
+
             GLenum format;
             if (nrChannels == 1) format = GL_RED;
             else if (nrChannels == 3) format = GL_RGB;
             else if (nrChannels == 4) format = GL_RGBA;
-            
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, format, width, height, 0, 
-                        format, GL_UNSIGNED_BYTE, flippedData);
-            
+
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, format, width, height, 0,
+                format, GL_UNSIGNED_BYTE, flippedData);
+
             delete[] flippedData;
             stbi_image_free(data);
-        } else {
+        }
+        else {
             std::cerr << "Cubemap failed to load: " << faces[i] << std::endl;
             stbi_image_free(data);
         }
     }
-    
+
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    
+
     return textureID;
 }
 
@@ -383,16 +392,16 @@ unsigned int loadCubemap(std::vector<std::string> faces) {
 unsigned int loadSkybox(bool useSkybox2) {
     std::vector<std::string> skyboxFaces;
     std::string folder = useSkybox2 ? "skybox2" : "skybox";
-    
+
     std::cout << "Loading skybox from folder: " << folder << std::endl;
-    
+
     skyboxFaces.push_back("textures/" + folder + "/right.png");
     skyboxFaces.push_back("textures/" + folder + "/left.png");
     skyboxFaces.push_back("textures/" + folder + "/top.png");
     skyboxFaces.push_back("textures/" + folder + "/bottom.png");
     skyboxFaces.push_back("textures/" + folder + "/front.png");
     skyboxFaces.push_back("textures/" + folder + "/back.png");
-    
+
     return loadCubemap(skyboxFaces);
 }
 
@@ -528,6 +537,7 @@ void main() {
 }
 )";
 
+// Modified fragment shader with selectable Fresnel mode (uniform uFresnelMode)
 const char* waterFragmentShader = R"(
 // Fragment shader for water surface
 // - Uses normal map perturbation + geometry normal for small-scale detail
@@ -544,9 +554,10 @@ in float FoamFactor;
 out vec4 FragColor;
 
 uniform samplerCube skybox;    // environment for reflections
-uniform sampler2D normalMap;  // tileable normal map for surface detail
-uniform vec3 viewPos;         // camera position in world space
-uniform float uTime;          // animated offset for normal sampling
+uniform sampler2D normalMap;   // tileable normal map for surface detail
+uniform vec3 viewPos;          // camera position in world space
+uniform float uTime;           // animated offset for normal sampling
+uniform int uFresnelMode;      // 0 = realistic, 1 = enhanced
 
 void main() {
     // base normal from geometry, then perturb by normal map for small-scale ripples
@@ -559,8 +570,20 @@ void main() {
     vec3 reflectDir = reflect(-viewDir, perturbedNormal);
     vec3 reflectColor = texture(skybox, reflectDir).rgb;
 
-    // Fresnel (Schlick-esque) to blend between water base color and reflection
-    float fresnel = pow(1.0 - max(dot(viewDir, perturbedNormal), 0.0), 3.0);
+    // ---- Schlick Fresnel with selectable parameters ----
+    float R0, exponent;
+    if (uFresnelMode == 0) {
+        // Realistic: water refractive index ~1.33
+        R0 = 0.020;
+        exponent = 5.0;
+    } else {
+        // Enhanced: very visible reflections
+        R0 = 0.7;
+        exponent = 2.0;
+    }
+    float cosTheta = max(dot(viewDir, perturbedNormal), 0.0);
+    float fresnel = R0 + (1.0 - R0) * pow(1.0 - cosTheta, exponent);
+    // ---------------------------------------------------
 
     vec3 waterColor = vec3(0.0, 0.3, 0.5); // subsurface tint
     vec3 color = mix(waterColor, reflectColor, fresnel);
@@ -648,7 +671,7 @@ void main() {
 
 // -------------------- Функция отрисовки корабля --------------------
 void drawShip(Shader& shader, const glm::mat4& view, const glm::mat4& projection,
-              const glm::vec3& position, const glm::vec3& forward, Model& ship) {
+    const glm::vec3& position, const glm::vec3& forward, Model& ship) {
     float yawAngle = glm::pi<float>() + atan2(forward.x, forward.z);
     glm::quat yawQuat = glm::angleAxis(yawAngle, glm::vec3(0.0f, 1.0f, 0.0f));
     glm::quat tilt = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
@@ -670,7 +693,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Water Waves - Press 'B' to switch skybox", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Water Waves - Press 'B' to switch skybox, 'F' to toggle Fresnel", NULL, NULL);
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
@@ -779,6 +802,8 @@ int main() {
         float calmness = useSkybox2 ? 0.4f : 1.0f;
         waterShader.setFloat("uCalmness", calmness);
         waterShader.setVec3("viewPos", cameraPos);
+        // Pass Fresnel mode to shader
+        waterShader.setInt("uFresnelMode", useEnhancedFresnel ? 1 : 0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, normalMap);
         waterShader.setInt("normalMap", 0);
@@ -852,22 +877,27 @@ void scroll_callback(GLFWwindow*, double, double) {
 void key_callback(GLFWwindow* window, int key, int, int action, int) {
     if (action == GLFW_PRESS) {
         switch (key) {
-            case GLFW_KEY_B:
-                // Switch between skybox and skybox2
-                useSkybox2 = !useSkybox2;
-                skyboxChanged = true;
-                std::cout << "Switching skybox to: " << (useSkybox2 ? "skybox2" : "skybox") << std::endl;
-                break;
-            
-            case GLFW_KEY_ESCAPE:
-                glfwSetWindowShouldClose(window, true);
-                break;
+        case GLFW_KEY_B:
+            // Switch between skybox and skybox2
+            useSkybox2 = !useSkybox2;
+            skyboxChanged = true;
+            std::cout << "Switching skybox to: " << (useSkybox2 ? "skybox2" : "skybox") << std::endl;
+            break;
+
+        case GLFW_KEY_F:   // Toggle Fresnel mode
+            useEnhancedFresnel = !useEnhancedFresnel;
+            std::cout << "Fresnel mode: " << (useEnhancedFresnel ? "ENHANCED (very visible)" : "realistic") << std::endl;
+            break;
+
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(window, true);
+            break;
         }
     }
 }
 
 void processInput(GLFWwindow* window) {
-    float speed = 5.0f * deltaTime;
+    float speed = 10.0f * deltaTime;
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         cameraPos += speed * cameraFront;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
